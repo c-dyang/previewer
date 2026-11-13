@@ -7,9 +7,11 @@
 
 ## 未排期（能力短板）
 
-- [ ] **T0 画面拖拽拿不到路径** — 拖到画面里只有文件名和内容（Chromium 只给 `{name,type,size}`，
+- [x] **T0 画面拖拽拿不到路径 —— 已实现（v0.3.0）** — 拖到画面里只有文件名和内容（Chromium 只给 `{name,type,size}`，
   无 `text/uri-list`、无 `File.path`）。就地渲染能用，但定位 / 复制路径 / 换后端都不可用。
   验收：拖任意文件到画面后，`文件 → 在资源管理器中显示` 不再是灰的。
+  **落地方式 = 下面的路线 2**（`postMessageWithAdditionalObjects` + `ICoreWebView2File.GetPath()`，实现在 `hostdrop.go`）；
+  路线 1 没做，留作没有 args2 时的备选。
   两条根治路线（WebView2 宿主侧有出口，不是无解）：
   1. **`ICoreWebView2Controller4.PutAllowExternalDrop(false)`**（Win32 1.0.1185.39+）：关掉 Chromium 自己的外部拖放，
      drop 落回宿主窗口 → `WM_DROPFILES` 拿全路径（本程序已有 WndProc 子类化，只是现在只有非客户区会走到）。
@@ -75,3 +77,4 @@
 
 - 要不要接到右键菜单（`HKCU\Software\Classes\*\shell`）？
 - 要不要和文件标签系统联动：预览窗口里直接读写标签？
+

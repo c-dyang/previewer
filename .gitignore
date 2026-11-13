@@ -1,9 +1,11 @@
 # 构建产物 —— 仓库只放源码，二进制走 Releases
 *.exe
+*.exe~
 *.dll
 *.syso
 *.test
 *.out
+*~
 
 # 运行期日志（drop.log / last-run.log 等）
 *.log

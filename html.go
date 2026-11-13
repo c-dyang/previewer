@@ -302,6 +302,8 @@ let INFO = ` + string(meta) + `;
 let mediaEl = null;        // 当前 <video>/<audio>，拖拽换页后会被重建，所以不当常量用
 
 function pvSend(id){ try{ if (typeof pvAct === 'function') pvAct(id); }catch(e){} }
+// 回执：宿主有没有把「画面拖拽拿路径」那条通道打通（Go 侧注册成功后注入 __pvCanDropPath）
+pvSend('hostdrop:' + (window.__pvCanDropPath ? 'ready' : 'off'));
 function fmt(t){
   if (!isFinite(t) || t < 0) t = 0;
   const m = Math.floor(t/60), s = Math.floor(t%60);
@@ -487,7 +489,27 @@ document.addEventListener('drop', e=>{
   e.preventDefault(); dragDepth = 0;
   document.body.classList.remove('dragging');
   const dt = e.dataTransfer;
-  const f = (dt.files && dt.files[0]) || null;
+  const files = dt.files ? Array.prototype.slice.call(dt.files) : [];
+  // 宿主注册了 WebMessageReceived + additional objects 时，把 File 原样交回去，
+  // 由 Go 拿绝对路径（这台机器上 __pvCanDropPath 由 Go 在开窗时注入）。
+  // 拿不到路径的老运行时仍走下面「名字+内容」的就地渲染。
+  if (files.length && window.__pvCanDropPath && window.chrome && chrome.webview &&
+      typeof chrome.webview.postMessageWithAdditionalObjects === 'function') {
+    try {
+      // 交给宿主换内容；万一宿主没接住（老运行时 / 取消），700ms 后自己兜底渲染，
+      // 免得拖完一个文件窗口还是空的。
+      window.__pvHostDropPending = true;
+      setTimeout(function(){
+        if (window.__pvHostDropPending && files[0]) {
+          window.__pvHostDropPending = false;
+          sendDroppedFile(files[0]);
+        }
+      }, 700);
+      chrome.webview.postMessageWithAdditionalObjects(window.__pvDropMsg || 'pv-drop', files);
+      return;
+    } catch (_) { window.__pvHostDropPending = false; /* 落到旧通路 */ }
+  }
+  const f = files[0] || null;
   if (!f) { pvSend('drop:' + JSON.stringify(collectDrop(dt))); return; }
   sendDroppedFile(f);
 });

@@ -52,6 +52,22 @@ func TestBuildShellEmptyHasDropZone(t *testing.T) {
 	}
 }
 
+// 画面拖拽拿路径那条通路（v0.3.0）在页面侧的三件套：
+// 能力开关、把 File 回传给宿主、以及宿主没接住时的兜底渲染。
+func TestShellJSHasHostDropPath(t *testing.T) {
+	js := shellJS(EmptyPlan())
+	for _, want := range []string{
+		"postMessageWithAdditionalObjects",
+		"__pvCanDropPath",
+		"__pvHostDropPending",
+		"sendDroppedFile(files[0])",
+	} {
+		if !strings.Contains(js, want) {
+			t.Errorf("画面拖拽通路缺 %q", want)
+		}
+	}
+}
+
 // 就地渲染时内容必须用 blob:/file: 那个来源，而不是硬拼路径。
 func TestContentUsesBlobURL(t *testing.T) {
 	p := &Plan{Name: "x.png", Kind: KindImage, BlobURL: "blob:file:///abc", Path: `C:\nope\x.png`}

@@ -68,28 +68,40 @@ preview.exe --version
 
 退出码：`0` 正常 · `2` 用法错 · `3` 缺 WebView2 Runtime · `4` 目标打不开 · `6` 起窗口失败 · `7` 无可用外部播放器 · `8` 无交互桌面。
 
-## 拖拽：两条路，能力不一样
+## 拖拽：两条通路，最后都能拿到路径
 
-裸开的窗口（或任何已开窗口）都能接文件拖拽，但**拖到哪个位置决定了能不能拿到路径**：
+裸开的窗口（或任何已开窗口）都能接文件拖拽，两条通路走的是不同层的 API，但**都能拿到绝对路径**：
 
-| 拖到 | 通路 | 拿到的信息 | 结果 |
+| 拖到 | 通路 | 拿到什么 | 结果 |
 |---|---|---|---|
-| **标题栏 / 窗口边框**（非客户区） | Win32 `WM_DROPFILES` | 完整路径 | 走完整路由：嗅探编码/编码格式、可换外部播放器、能「定位文件/复制路径」 |
-| **画面里**（客户区） | HTML5 `drop` 事件 | **只有文件名 + 内容，没有路径** | 就地渲染，`degraded_reason = drop_without_path`，路径相关菜单置灰 |
+| **标题栏 / 窗口边框**（非客户区） | Win32 `WM_DROPFILES`（`DragAcceptFiles` + 子类化 WndProc） | 完整路径 | 走完整路由，重载页面 |
+| **画面里**（客户区） | HTML5 `drop` → `chrome.webview.postMessageWithAdditionalObjects` → 宿主 `ICoreWebView2File.GetPath()` | 完整路径 + 内容 | 就地换内容，路径相关菜单同样可用 |
 
-为什么画面里拿不到路径 —— 浏览器给的 `dataTransfer` 只有这些：
+画面那条为什么不能只靠 JS：浏览器给页面的 `dataTransfer` 只有这些，`File.path` 恒为空（那是 Electron 的私有扩展）：
 
 ```json
 {"types":["Files"],"data":{"Files":""},
  "files":[{"name":"gbk-log.txt","type":"text/plain","size":65,"path":""}]}
 ```
 
-`text/uri-list` 根本没有，`File.path` 恒为空（那是 Electron 的私有扩展，Chromium 不提供）。所以就地渲染只能：
+但 WebView2 在**宿主侧**留了官方出口（[WebView2Feedback#501](https://github.com/MicrosoftEdge/WebView2Feedback/issues/501) → [WebMessageObjects](https://github.com/MicrosoftEdge/WebView2Feedback/blob/main/specs/WebMessageObjects.md)）：
+页面把 DOM `File` 原样回传，宿主拿到的是 [`ICoreWebView2File`](https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2file)，`get_Path` 就是绝对路径。
 
-- **文本类**：`readAsArrayBuffer` → base64 → 交给 Go 解码（BOM → UTF-8 → GBK，和读盘同一条解码路径）
-- **媒体类**：`URL.createObjectURL(file)` 建 `blob:` URL 交给 `<img>/<video>/<audio>`，Chromium 直接从磁盘流式读，不占内存
+```js
+// 页面侧（drop 里一行）
+chrome.webview.postMessageWithAdditionalObjects("pv-drop", files);
+```
 
-`blob:` URL 只活在当前文档里，所以这条链**不能靠重载页面**实现 —— 只能在当前页面里换内容：
+本程序的实现见 [`hostdrop.go`](hostdrop.go)：`go-webview2` 门面没声明这几个接口，所以按 COM 槽位直接调
+（`AddWebMessageReceived` = 34，`GetAdditionalObjects` = 6，`GetPath` = 3）。
+
+**降级两道保险**：
+
+1. 运行时没有 args2（WebView2 < 1.0.1774.30，即 Edge 111 之前）→ 开窗时注册失败（`drop.log` 会写原因），页面**不**走这条通路。
+2. 走了但宿主 700 ms 内没接住 → 页面自己兜底渲染（`readAsArrayBuffer` + base64 交给 Go 解码，或 `blob:` URL）。
+   这条兜底渲染即 `degraded_reason = drop_without_path` 仍会出现的唯一场景，路径相关菜单此时置灰。
+
+`blob:` URL 只活在当前文档里，所以兜底那条链**不能靠重载页面**实现 —— 只能在当前页面里换内容：
 Go 造 HTML → 注入 → 页面回执 `replace-done`。
 
 ## 路由：`f(类型, 容器, 编码, 可用后端)`
@@ -189,17 +201,20 @@ mkv 在头 1 MiB 里找 `V_MPEG4/ISO/AVC`、`V_MPEGH/ISO/HEVC`、`V_AV1`、`V_VP
 3. **`.html` 走直通**，没有本程序的菜单条（靠注入的全局 JS 兜住 `Esc` / `F11`）。
 4. **HEVC 按未安装处理。** 装了系统 HEVC Video Extensions 的机器上 Chromium 其实能解 HEVC，
    此时会被保守地判成降级 —— 这是"宁可交出去也别在黑框里报错"的取舍。
-5. **画面拖拽拿不到路径**（见上），要完整能力就拖到标题栏。根治有两条宿主侧路线
-   （`AllowExternalDrop(false)` / `postMessageWithAdditionalObjects` + `ICoreWebView2File`），见 [`TODO.md`](TODO.md) T0。
+5. **画面拖拽依赖 WebView2 运行时 ≥ 1.0.1774.30**（`WebMessageReceivedEventArgs2`）。更老的运行时上会自动退回
+   「只有名字和内容」的就地渲染（`drop_without_path`），功能不中断、但路径相关菜单置灰。
 6. **可用的外部播放器决定体验下限。** 只有 ffplay 时降级会掉进 SDL 窗口；装 mpv 后自动优先用它，代码不用改。
 7. **`Ctrl+O` 的文件对话框借 PowerShell WinForms**，起窗约 1 s（TODO 里有 `IFileOpenDialog` 方案）。
 8. **`--server` 复用实例没做。** 现在每次调用约 600 ms，与"临时窗口态"的信条一致。
 
 ## 版本
 
-`0.2.0` —— 7 类内容路由 + 三条降级链、裸开 + 双通路拖拽 + 就地渲染、`--probe --json` 契约、无控制台黑框。
+`0.3.0` —— 画面拖拽经 `ICoreWebView2File` 拿绝对路径（两条拖拽通路能力对齐）、7 类内容路由 + 三条降级链、`--probe --json` 契约、无控制台黑框。
+上一版 `0.2.0`：画面拖拽只有文件名与内容（`drop_without_path`）。
 路线图与未排期项见 [`TODO.md`](TODO.md)。
 
 ## 许可
 
 MIT，见 [LICENSE](LICENSE)。
+
+

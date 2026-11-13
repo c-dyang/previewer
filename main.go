@@ -17,7 +17,7 @@ import (
 	webview2 "github.com/jchv/go-webview2"
 )
 
-const appVersion = "0.2.0"
+const appVersion = "0.3.0"
 
 // 退出码：0 正常 / 2 用法 / 3 缺 WebView2 / 4 目标打不开 / 6 起窗口失败 / 7 无外部播放器 / 8 无交互桌面
 const (
@@ -329,6 +329,15 @@ func (a *App) open(p *Plan, w, h int, debug, fullscreen bool) (err error) {
 	// 拖到标题栏 / 非客户区的文件走 WM_DROPFILES；拖到页面里走 JS drop。
 	installDrop(a.hwnd, func(paths []string) { a.openPaths(paths) })
 
+	// 拖进画面的文件：走 WebView2 的 additional objects 通路拿绝对路径（见 hostdrop.go）。
+	// 拿不到就退回 JS 侧「只有名字和内容」的就地渲染，功能不中断。
+	if ok, herr := attachHostDrop(vw, func(paths []string) { a.openPathsInPlace(paths) }, a.logDrop); ok {
+		vw.Init("window.__pvCanDropPath=true;window.__pvDropMsg=" + strconv.Quote(hostDropMessage) + ";")
+		a.logDrop("附加对象通道已就绪（画面拖拽可拿绝对路径）")
+	} else {
+		a.logDrop("附加对象通道不可用，画面拖拽退回就地渲染: " + herr.Error())
+	}
+
 	if fullscreen {
 		toggleFullscreen(a.hwnd)
 	}
@@ -371,6 +380,8 @@ func (a *App) act(id string) string {
 		a.w.Destroy()
 	case id == "fullscreen":
 		toggleFullscreen(a.hwnd)
+	case strings.HasPrefix(id, "hostdrop:"):
+		a.logDrop("画面拖拽通道 " + id[len("hostdrop:"):])
 	case strings.HasPrefix(id, "drop:"):
 		a.handleDropPayload(id[len("drop:"):])
 	case strings.HasPrefix(id, "dropblob:"):
@@ -526,6 +537,37 @@ func (a *App) openPaths(paths []string) {
 		p.Notes = append(p.Notes, itoa(len(paths)-1)+" 个文件被忽略（一次只看一个）")
 	}
 	_ = a.load(p)
+}
+
+// openPathsInPlace 是「拖进画面」带上了绝对路径之后的入口：
+// 和 openPaths 的区别是**不重载页面** —— 内容就地换掉，窗口标题与菜单状态跟着走。
+func (a *App) openPathsInPlace(paths []string) {
+	if len(paths) == 0 {
+		return
+	}
+	a.logDrop("画面拖拽拿到路径: " + strings.Join(paths, " | "))
+	// 路径到手，撤掉页面那边的 700ms 兜底渲染
+	a.w.Dispatch(func() { a.w.Eval("window.__pvHostDropPending=false") })
+	p, err := Resolve(paths[0], a.b)
+	if err != nil {
+		a.logDrop("Resolve 失败 " + paths[0] + ": " + err.Error())
+		return
+	}
+	if p.Renderer == RExternal {
+		if p.Backend != "" {
+			_ = spawnPlayer(p.Backend, p.Path)
+		}
+		return
+	}
+	if len(paths) > 1 {
+		p.Notes = append(p.Notes, itoa(len(paths)-1)+" 个文件被忽略（一次只看一个）")
+	}
+	if p.Renderer == RDirect {
+		// html / pdf 直通类没有外壳页，只能 Navigate
+		_ = a.load(p)
+		return
+	}
+	a.replaceContent(p)
 }
 
 func (a *App) logDrop(msg string) {
