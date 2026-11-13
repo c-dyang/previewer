@@ -189,7 +189,8 @@ mkv 在头 1 MiB 里找 `V_MPEG4/ISO/AVC`、`V_MPEGH/ISO/HEVC`、`V_AV1`、`V_VP
 3. **`.html` 走直通**，没有本程序的菜单条（靠注入的全局 JS 兜住 `Esc` / `F11`）。
 4. **HEVC 按未安装处理。** 装了系统 HEVC Video Extensions 的机器上 Chromium 其实能解 HEVC，
    此时会被保守地判成降级 —— 这是"宁可交出去也别在黑框里报错"的取舍。
-5. **画面拖拽拿不到路径**（见上），要完整能力就拖到标题栏。
+5. **画面拖拽拿不到路径**（见上），要完整能力就拖到标题栏。根治有两条宿主侧路线
+   （`AllowExternalDrop(false)` / `postMessageWithAdditionalObjects` + `ICoreWebView2File`），见 [`TODO.md`](TODO.md) T0。
 6. **可用的外部播放器决定体验下限。** 只有 ffplay 时降级会掉进 SDL 窗口；装 mpv 后自动优先用它，代码不用改。
 7. **`Ctrl+O` 的文件对话框借 PowerShell WinForms**，起窗约 1 s（TODO 里有 `IFileOpenDialog` 方案）。
 8. **`--server` 复用实例没做。** 现在每次调用约 600 ms，与"临时窗口态"的信条一致。
