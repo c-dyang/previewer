@@ -1,0 +1,16 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>diag</title>
+<style>body{margin:0;font:20px/1.6 Consolas,monospace;background:#fff;color:#111}
+div{padding:8px 12px;border-bottom:1px solid #ddd}#r{position:fixed;right:0;top:0;width:6px;height:100%;background:red}</style></head>
+<body><div id="o">…</div><div id="r"></div>
+<script>
+const f = () => {
+  const d = document.documentElement;
+  document.getElementById('o').textContent =
+    'innerWidth=' + window.innerWidth +
+    '  innerHeight=' + window.innerHeight +
+    '  dpr=' + window.devicePixelRatio +
+    '  docClientW=' + d.clientWidth +
+    '  bodyOffsetW=' + document.body.offsetWidth;
+};
+f(); window.addEventListener('resize', f); setInterval(f, 500);
+</script></body></html>

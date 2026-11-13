@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go version
+        run: go version
+
+      - name: vet
+        run: go vet ./...
+
+      - name: gofmt
+        run: |
+          $bad = gofmt -l .
+          if ($bad) { Write-Host "gofmt 需要整理的文件:"; Write-Host $bad; exit 1 }
+        shell: pwsh
+
+      - name: build
+        run: go build -o preview.exe .
+
+      - name: test
+        run: go test ./...
