@@ -10,8 +10,17 @@
 - [ ] **T0 画面拖拽拿不到路径** — 拖到画面里只有文件名和内容（Chromium 只给 `{name,type,size}`，
   无 `text/uri-list`、无 `File.path`）。就地渲染能用，但定位 / 复制路径 / 换后端都不可用。
   验收：拖任意文件到画面后，`文件 → 在资源管理器中显示` 不再是灰的。
-  做法：给 WebView2 控制器设 `AllowExternalDrop=false`（`ICoreWebView2Controller4`），让 drop 落到顶层窗口走 `WM_DROPFILES`。
-  ⚠️ 这个接口 `go-webview2` 没暴露、`controller` 字段也不导出 —— 要么给上游提 PR，要么自己 fork 一份 patch。
+  两条根治路线（WebView2 宿主侧有出口，不是无解）：
+  1. **`ICoreWebView2Controller4.PutAllowExternalDrop(false)`**（Win32 1.0.1185.39+）：关掉 Chromium 自己的外部拖放，
+     drop 落回宿主窗口 → `WM_DROPFILES` 拿全路径（本程序已有 WndProc 子类化，只是现在只有非客户区会走到）。
+     代价：页面再也收不到 `dragover`/`drop`，拖拽高亮与「等文件」交互得换实现。
+  2. **`chrome.webview.postMessageWithAdditionalObjects(msg, [file])` + `ICoreWebView2WebMessageReceivedEventArgs2.GetAdditionalObjects`**
+     → `ICoreWebView2File.GetPath()`（1.0.1774.30+，见 [WebView2Feedback#501](https://github.com/MicrosoftEdge/WebView2Feedback/issues/501) 与
+     [ICoreWebView2File](https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2file)）。
+     代价：要自己声明 3 个 COM 接口；好处是 HTML5 拖拽 UX 全部保留。
+  取指针的现成入口：`go-webview2` 的 `pkg/edge` 是**公开包**，`(*edge.Chromium).GetController()` 已导出；
+  门面里的 `webview.browser` 是未导出字段，用 `reflect`+`unsafe` 五级可拿到（Wails 的 fork
+  [`wailsapp/go-webview2`](https://github.com/wailsapp/go-webview2) 已经把上面两条都实现成生成式绑定了，可直接抄类型声明）。
 
 - [ ] **T1 大文本虚拟滚动** — 现在 4 MiB 以上截断。
   验收：`--probe --json <8GB 日志>` 的 `degraded_reason` 不再是 `text_truncated_at_limit`；
